@@ -1,11 +1,14 @@
-﻿"use client";
+"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+type Correctness = { correct: boolean; pick: "HOME" | "DRAW" | "AWAY"; actual: "HOME" | "DRAW" | "AWAY" } | null;
 
 type Item = {
   matchId: number;
   kickoffUtc: string | null;
   group: string;
+  groupNo?: number | null;
   home: string;
   away: string;
   homeLogo?: string;
@@ -14,7 +17,18 @@ type Item = {
   score?: string | null;
   pred?: any;
   nerd?: any;
-  correctness?: { correct: boolean; pick: "HOME"|"DRAW"|"AWAY"; actual: "HOME"|"DRAW"|"AWAY" } | null;
+  correctness?: Correctness;
+};
+
+type DashboardPayload = {
+  ok: boolean;
+  season: number;
+  matchdayNo: number;
+  matchdayLabel: string;
+  currentMatchdayNo: number;
+  availableMatchdays: number[];
+  summary: { total: number; finished: number; correct: number; accuracyPct: number };
+  items: Item[];
 };
 
 function pct(n: number) {
@@ -47,7 +61,7 @@ function Pill({ active, children, onClick }: any) {
     <button
       onClick={onClick}
       className={[
-        "px-3 py-2 rounded-full text-sm transition",
+        "px-3 py-2 rounded-full text-sm transition whitespace-nowrap",
         "border border-white/10",
         active
           ? "bg-white text-black border-white/30 shadow-lg shadow-black/30 font-semibold"
@@ -60,18 +74,37 @@ function Pill({ active, children, onClick }: any) {
   );
 }
 
-export default function DashboardClient({ items }: { items: Item[] }) {
+export default function DashboardClient({ initial }: { initial: DashboardPayload }) {
+  const [data, setData] = useState<DashboardPayload>(initial);
+  const [loading, setLoading] = useState(false);
+
   const [sort, setSort] = useState<"time" | "home" | "away" | "conf">("time");
   const [highOnly, setHighOnly] = useState(false);
   const [q, setQ] = useState("");
 
+  const matchdayNo = data.matchdayNo;
+  const idx = data.availableMatchdays.indexOf(matchdayNo);
+  const prevNo = idx > 0 ? data.availableMatchdays[idx - 1] : null;
+  const nextNo = idx >= 0 && idx < data.availableMatchdays.length - 1 ? data.availableMatchdays[idx + 1] : null;
+
+  async function loadMatchday(no: number) {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/dashboard?matchday=${no}`, { cache: "no-store" });
+      const j = (await r.json()) as DashboardPayload;
+      if (j?.ok) setData(j);
+    } finally {
+      setLoading(false);
+      // Suche/Filter behalten (macht UX nicer)
+    }
+  }
+
   const shown = useMemo(() => {
-    let list = [...(items || [])];
+    let list = [...(data.items || [])];
 
     const qq = q.trim().toLowerCase();
     if (qq) list = list.filter((m) => `${m.home} ${m.away} ${m.group}`.toLowerCase().includes(qq));
 
-    // Filter bleibt funktionsfähig, weil confidence wieder aus API kommt
     if (highOnly) list = list.filter((m) => m.nerd?.confidence?.label === "hoch");
 
     list.sort((a, b) => {
@@ -85,13 +118,50 @@ export default function DashboardClient({ items }: { items: Item[] }) {
     });
 
     return list;
-  }, [items, sort, highOnly, q]);
+  }, [data.items, sort, highOnly, q]);
 
   return (
     <>
-      <div className="sticky top-3 z-30">
-        <div className="glass rounded-3xl p-5 md:p-6 shadow-xl shadow-black/30 backdrop-blur-xl">
-          <div className="flex flex-col md:flex-row md:items-end gap-4 md:gap-6">
+      {/* Spieltag-Navigation + Stats */}
+      <div className="sticky top-3 z-40">
+        <div className="glass rounded-3xl p-4 md:p-5 shadow-xl shadow-black/30 backdrop-blur-xl">
+          <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                disabled={!prevNo || loading}
+                onClick={() => prevNo && loadMatchday(prevNo)}
+                className={[
+                  "rounded-2xl px-4 py-3 border border-white/10 bg-black/25 text-white/85",
+                  "disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 transition",
+                ].join(" ")}
+              >
+                ←
+              </button>
+
+              <div className="flex-1 text-center min-w-0">
+                <div className="text-black font-extrabold text-lg md:text-xl truncate">
+                  {data.matchdayLabel}
+                </div>
+                <div className="mt-1 text-xs text-black/70">
+                  {loading ? "lädt…" : `Richtig: ${data.summary.correct}/${data.summary.finished} • Quote: ${data.summary.accuracyPct}%`}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={!nextNo || loading}
+                onClick={() => nextNo && loadMatchday(nextNo)}
+                className={[
+                  "rounded-2xl px-4 py-3 border border-white/10 bg-black/25 text-white/85",
+                  "disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 transition",
+                ].join(" ")}
+              >
+                →
+              </button>
+            </div>
+
+            {/* Controls + Suche */}
             <div className="flex-1">
               <div className="text-white/90 text-sm font-semibold">Controls</div>
               <div className="mt-2 flex gap-2 overflow-x-auto no-scrollbar py-1">
@@ -100,22 +170,22 @@ export default function DashboardClient({ items }: { items: Item[] }) {
                 <Pill active={sort === "away"} onClick={() => setSort("away")}>Auswärtssieg%</Pill>
                 <Pill active={sort === "conf"} onClick={() => setSort("conf")}>Confidence</Pill>
                 <span className="mx-1 opacity-30">|</span>
-                <Pill active={highOnly} onClick={() => setHighOnly(v => !v)}>
+                <Pill active={highOnly} onClick={() => setHighOnly((v) => !v)}>
                   {highOnly ? "Nur hohe Sicherheit ✓" : "Nur hohe Sicherheit"}
                 </Pill>
               </div>
-            </div>
 
-            <div className="w-full md:w-[340px]">
-              <div className="text-white/90 text-sm font-semibold">Suche</div>
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Team oder Spieltag…"
-                className="mt-2 w-full rounded-2xl bg-black/40 border border-white/20 px-4 py-3 text-white outline-none focus:border-white/35"
-              />
-              <div className="mt-2 text-xs text-white/70">
-                Treffer: <span className="text-white font-semibold">{shown.length}</span>
+              <div className="mt-3">
+                <div className="text-white/90 text-sm font-semibold">Suche</div>
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Team oder Spieltag…"
+                  className="mt-2 w-full rounded-2xl bg-black/40 border border-white/20 px-4 py-3 text-white outline-none focus:border-white/35"
+                />
+                <div className="mt-2 text-xs text-white/70">
+                  Treffer: <span className="text-white font-semibold">{shown.length}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -160,6 +230,7 @@ export default function DashboardClient({ items }: { items: Item[] }) {
                 </div>
               </div>
 
+              {/* Match: Mobile stacked, Desktop row */}
               <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   {m.homeLogo ? (
@@ -167,15 +238,15 @@ export default function DashboardClient({ items }: { items: Item[] }) {
                     <img src={m.homeLogo} alt={m.home} className="h-10 w-10 rounded-2xl bg-black/30 p-1 object-contain" />
                   ) : <div className="h-10 w-10 rounded-2xl bg-black/30" />}
 
-                  <span className="max-w-[240px] whitespace-normal break-words rounded-2xl bg-black/55 border border-white/15 px-3 py-1 text-white font-extrabold leading-snug shadow-sm shadow-black/30">
+                  <span className="flex-1 min-w-0 whitespace-normal break-words rounded-2xl bg-black/55 border border-white/15 px-3 py-1 text-white font-extrabold leading-snug shadow-sm shadow-black/30">
                     {m.home}
                   </span>
                 </div>
 
-                <div className="text-white/40 font-semibold">vs</div>
+                <div className="text-white/40 font-semibold text-center sm:px-2">vs</div>
 
-                <div className="flex items-center gap-2 min-w-0 justify-end flex-1">
-                  <span className="max-w-[240px] whitespace-normal break-words rounded-2xl bg-black/55 border border-white/15 px-3 py-1 text-white font-extrabold leading-snug shadow-sm shadow-black/30 text-right">
+                <div className="flex items-center gap-2 min-w-0 justify-end sm:flex-1">
+                  <span className="flex-1 min-w-0 whitespace-normal break-words rounded-2xl bg-black/55 border border-white/15 px-3 py-1 text-white font-extrabold leading-snug shadow-sm shadow-black/30 text-right">
                     {m.away}
                   </span>
 
@@ -186,7 +257,7 @@ export default function DashboardClient({ items }: { items: Item[] }) {
                 </div>
               </div>
 
-              {/* Endstand: immer anzeigen wenn finished */}
+              {/* Endstand */}
               {m.isFinished && m.score ? (
                 <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-black/45 border border-white/15 px-3 py-1 text-xs text-white/90">
                   <span className="font-semibold">Endstand</span>
@@ -205,6 +276,7 @@ export default function DashboardClient({ items }: { items: Item[] }) {
                 </div>
               ) : (
                 <>
+                  {/* Probs: Mobile 1 col, Desktop 3 col */}
                   <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
                       <div className="text-xs text-white/70">Heimsieg</div>
@@ -220,7 +292,7 @@ export default function DashboardClient({ items }: { items: Item[] }) {
                     </div>
                   </div>
 
-                  {/* Confidence Anzeige wurde entfernt (wie du wolltest) */}
+                  {/* Confidence Anzeige bleibt weg */}
 
                   <details className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
                     <summary className="cursor-pointer text-sm font-semibold text-white">
@@ -264,5 +336,3 @@ export default function DashboardClient({ items }: { items: Item[] }) {
     </>
   );
 }
-
-
