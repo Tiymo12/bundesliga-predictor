@@ -94,7 +94,7 @@ export default function DashboardClient({ items }: { items: Item[] }) {
           <div className="flex flex-col md:flex-row md:items-end gap-4 md:gap-6">
             <div className="flex-1">
               <div className="text-white/90 text-sm font-semibold">Controls</div>
-              <div className="mt-2 flex flex-wrap gap-2">
+              <div className="mt-2 flex gap-2 overflow-x-auto no-scrollbar py-1">
                 <Pill active={sort === "time"} onClick={() => setSort("time")}>Zeit</Pill>
                 <Pill active={sort === "home"} onClick={() => setSort("home")}>Heimsieg%</Pill>
                 <Pill active={sort === "away"} onClick={() => setSort("away")}>Auswärtssieg%</Pill>
@@ -264,3 +264,4 @@ export default function DashboardClient({ items }: { items: Item[] }) {
     </>
   );
 }
+
