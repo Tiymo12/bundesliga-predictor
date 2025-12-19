@@ -1,4 +1,4 @@
-﻿import { buildStrengthsFromMatches, predict3WayFromStrengths } from "@/lib/predict";
+import { buildStrengthsFromMatches, predict3WayFromStrengths } from "@/lib/predict";
 
 export const runtime = "nodejs";
 
@@ -23,13 +23,21 @@ function toIsoOrNull(raw: any): string | null {
 function pickTeamName(team: any): string {
   return clean(team?.teamName) || clean(team?.shortName);
 }
+function groupLabel(m: any): string {
+  return clean(m?.group?.groupName);
+}
+function groupNumberFromLabel(label: string): number | null {
+  const m = label.match(/(\d+)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
 
 function poissonPmf(k: number, lambda: number) {
   let fact = 1;
   for (let i = 2; i <= k; i++) fact *= i;
   return (Math.pow(lambda, k) * Math.exp(-lambda)) / fact;
 }
-
 function scoreMatrix(lambdaHome: number, lambdaAway: number, maxGoals = 6) {
   const rows: { hg: number; ag: number; p: number }[] = [];
   for (let hg = 0; hg <= maxGoals; hg++) {
@@ -44,7 +52,6 @@ function scoreMatrix(lambdaHome: number, lambdaAway: number, maxGoals = 6) {
   rows.sort((a, b) => b.p - a.p);
   return rows;
 }
-
 function derivedMarkets(matrix: { hg: number; ag: number; p: number }[]) {
   let over25 = 0;
   let btts = 0;
@@ -54,10 +61,9 @@ function derivedMarkets(matrix: { hg: number; ag: number; p: number }[]) {
   }
   return { over25, under25: 1 - over25, bttsYes: btts, bttsNo: 1 - btts };
 }
-
 function confidenceFrom3Way(pHome: number, pDraw: number, pAway: number) {
   const eps = 1e-12;
-  const ps = [pHome, pDraw, pAway].map(x => Math.max(eps, x));
+  const ps = [pHome, pDraw, pAway].map((x) => Math.max(eps, x));
   const H = -ps.reduce((a, x) => a + x * Math.log(x), 0);
   const Hmax = Math.log(3);
   const clarity = 1 - H / Hmax;
@@ -73,13 +79,11 @@ function finalScore(m: any): { hg: number; ag: number } | null {
   if (!Number.isFinite(hg) || !Number.isFinite(ag)) return null;
   return { hg, ag };
 }
-
 function outcomeFromScore(hg: number, ag: number): "HOME" | "DRAW" | "AWAY" {
   if (hg > ag) return "HOME";
   if (hg < ag) return "AWAY";
   return "DRAW";
 }
-
 function topPick(pred: any): "HOME" | "DRAW" | "AWAY" {
   const ph = pred?.p?.home ?? 0;
   const pd = pred?.p?.draw ?? 0;
@@ -99,40 +103,60 @@ async function getSeasonMatches(season: number) {
   return matches;
 }
 
+function normalizeMatch(m: any) {
+  const sc = finalScore(m);
+  return {
+    matchId: m.matchID ?? null,
+    kickoffUtc: toIsoOrNull(m.matchDateTimeUTC || m.matchDateTime),
+    group: groupLabel(m),
+    groupNo: groupNumberFromLabel(groupLabel(m)),
+    home: pickTeamName(m.team1),
+    away: pickTeamName(m.team2),
+    homeLogo: clean(m.team1?.teamIconUrl),
+    awayLogo: clean(m.team2?.teamIconUrl),
+    isFinished: !!m.matchIsFinished,
+    score: sc ? `${sc.hg}:${sc.ag}` : null,
+    _score: sc,
+  };
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const season = Number(process.env.SEASON || "2025");
   const maxGoals = Number(searchParams.get("maxGoals") || "6");
+  const requestedMatchday = searchParams.get("matchday");
+  const requestedNo = requestedMatchday ? Number(requestedMatchday) : null;
 
-  // aktueller Spieltag: enthält upcoming + finished
-  const raw = await fetchJson("https://api.openligadb.de/getmatchdata/bl1", 300);
+  // Saison-Daten (für Spieltage + Modell)
+  const seasonMatches = await getSeasonMatches(season);
 
-  const matchday = (Array.isArray(raw) ? raw : [])
-    .map((m: any) => {
-      const sc = finalScore(m);
-      return {
-        matchId: m.matchID ?? null,
-        kickoffUtc: toIsoOrNull(m.matchDateTimeUTC || m.matchDateTime),
-        group: clean(m.group?.groupName),
-        home: pickTeamName(m.team1),
-        away: pickTeamName(m.team2),
-        homeLogo: clean(m.team1?.teamIconUrl),
-        awayLogo: clean(m.team2?.teamIconUrl),
-        isFinished: !!m.matchIsFinished,
-        score: sc ? `${sc.hg}:${sc.ag}` : null,
-        _score: sc,
-      };
-    })
-    .filter((x: any) => x.home && x.away)
-    .sort((a: any, b: any) => {
+  // verfügbare Spieltage (aus Saison)
+  const mdSet = new Set<number>();
+  for (const m of seasonMatches || []) {
+    const label = groupLabel(m);
+    const n = groupNumberFromLabel(label);
+    if (n) mdSet.add(n);
+  }
+  const availableMatchdays = Array.from(mdSet).sort((a, b) => a - b);
+
+  // "aktueller Spieltag" aus OpenLigaDB current endpoint (nur damit Default passt)
+  const currentRaw = await fetchJson("https://api.openligadb.de/getmatchdata/bl1", 300);
+  const currentFirst = Array.isArray(currentRaw) && currentRaw.length ? normalizeMatch(currentRaw[0]) : null;
+  const currentMatchdayNo = currentFirst?.groupNo ?? (availableMatchdays.at(-1) ?? 1);
+
+  const matchdayNo = Number.isFinite(requestedNo as any) && requestedNo ? requestedNo : currentMatchdayNo;
+
+  // Spiele des gewählten Spieltags (aus Saison, damit man zurückklicken kann)
+  const matchday = (Array.isArray(seasonMatches) ? seasonMatches : [])
+    .map(normalizeMatch)
+    .filter((x) => x.home && x.away && x.groupNo === matchdayNo)
+    .sort((a, b) => {
       const ta = a.kickoffUtc ? new Date(a.kickoffUtc).getTime() : 9e15;
       const tb = b.kickoffUtc ? new Date(b.kickoffUtc).getTime() : 9e15;
       return ta - tb;
-    })
-    .slice(0, 18);
+    });
 
   // Modell aus Saison
-  const seasonMatches = await getSeasonMatches(season);
   const strengths = buildStrengthsFromMatches(seasonMatches);
 
   const items = matchday.map((m: any) => {
@@ -141,7 +165,7 @@ export async function GET(req: Request) {
     let nerd = null;
     if (pred?.ok) {
       const matrix = scoreMatrix(pred.lambdaHome, pred.lambdaAway, maxGoals);
-      const topScores = matrix.slice(0, 5).map(r => ({
+      const topScores = matrix.slice(0, 5).map((r) => ({
         score: `${r.hg}:${r.ag}`,
         p: r.p,
         pct: Math.round(r.p * 1000) / 10,
@@ -177,12 +201,21 @@ export async function GET(req: Request) {
     return { ...m, pred, nerd, correctness };
   });
 
+  // Stats pro Spieltag
+  const finished = items.filter((x: any) => x.isFinished && x.correctness).length;
+  const correct = items.filter((x: any) => x.correctness?.correct).length;
+  const total = items.length;
+  const accuracyPct = finished ? Math.round((correct / finished) * 1000) / 10 : 0;
+
   return Response.json({
     ok: true,
-    source: "OpenLigaDB (current matchday + season strengths)",
+    source: "OpenLigaDB (season matchdays + season strengths)",
     season,
-    teamsInModel: Object.keys(strengths.teams).length,
-    count: items.length,
+    matchdayNo,
+    matchdayLabel: `${matchdayNo}. Spieltag`,
+    currentMatchdayNo,
+    availableMatchdays,
+    summary: { total, finished, correct, accuracyPct },
     items,
   });
 }

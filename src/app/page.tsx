@@ -2,7 +2,7 @@ import DashboardClient from "./DashboardClient";
 import { headers } from "next/headers";
 
 async function originFromHeaders() {
-  const h = await headers(); // Next.js 16: headers() ist async
+  const h = await headers();
   const proto = h.get("x-forwarded-proto") ?? "http";
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
   return `${proto}://${host}`;
@@ -11,13 +11,12 @@ async function originFromHeaders() {
 async function getDashboard() {
   const origin = await originFromHeaders();
   const res = await fetch(`${origin}/api/dashboard`, { cache: "no-store" });
-  if (!res.ok) return { ok: false, items: [] };
+  if (!res.ok) return { ok: false, items: [], availableMatchdays: [], summary: { total: 0, finished: 0, correct: 0, accuracyPct: 0 }, matchdayNo: 1, matchdayLabel: "1. Spieltag", currentMatchdayNo: 1, season: 2025 };
   return res.json();
 }
 
 export default async function Home() {
   const data = await getDashboard();
-  const items = data.items || [];
 
   return (
     <main className="min-h-screen">
@@ -32,7 +31,7 @@ export default async function Home() {
           </h1>
 
           <p className="mt-2 text-black/70 max-w-2xl">
-            Sortieren, filtern, suchen – plus Score-Probs, O/U 2.5, BTTS & Confidence.
+            Spieltage zurückklicken, Stats pro Spieltag, plus Score-Probs, O/U 2.5, BTTS.
           </p>
 
           <div className="mt-4 text-xs text-black/55">
@@ -42,7 +41,7 @@ export default async function Home() {
       </header>
 
       <section className="mx-auto max-w-6xl px-5 pb-14">
-        <DashboardClient items={items} />
+        <DashboardClient initial={data} />
       </section>
     </main>
   );
