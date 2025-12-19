@@ -1,13 +1,16 @@
-﻿import DashboardClient from "./DashboardClient";
+import DashboardClient from "./DashboardClient";
+import { headers } from "next/headers";
 
-function baseUrl() {
-  if (process.env.NEXT_PUBLIC_BASE_URL) return process.env.NEXT_PUBLIC_BASE_URL;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return "http://localhost:3000";
+async function originFromHeaders() {
+  const h = await headers(); // Next.js 16: headers() ist async
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+  return `${proto}://${host}`;
 }
 
 async function getDashboard() {
-  const res = await fetch(`${baseUrl()}/api/dashboard`, { cache: "no-store" });
+  const origin = await originFromHeaders();
+  const res = await fetch(`${origin}/api/dashboard`, { cache: "no-store" });
   if (!res.ok) return { ok: false, items: [] };
   return res.json();
 }
