@@ -160,7 +160,7 @@ export default function DashboardClient({ items }: { items: Item[] }) {
                 </div>
               </div>
 
-              <div className="mt-4 flex items-center gap-3">
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   {m.homeLogo ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -205,7 +205,7 @@ export default function DashboardClient({ items }: { items: Item[] }) {
                 </div>
               ) : (
                 <>
-                  <div className="mt-4 grid grid-cols-3 gap-3">
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
                       <div className="text-xs text-white/70">Heimsieg</div>
                       <div className="text-2xl font-extrabold text-white">{pct(m.pred.p.home)}</div>
@@ -264,4 +264,5 @@ export default function DashboardClient({ items }: { items: Item[] }) {
     </>
   );
 }
+
 
